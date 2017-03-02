@@ -1,0 +1,44 @@
+name:                haskell-gl
+version:             0.1.0.0
+-- synopsis:
+-- description:
+homepage:            https://github.com/chfi/haskell-gl#readme
+license:             MIT
+license-file:        LICENSE
+author:              Christian Fischer
+maintainer:          christian@chfi.se
+copyright:           2017 Christian Fischer
+category:            Web
+build-type:          Simple
+cabal-version:       >=1.10
+extra-source-files:  README.md
+
+executable tutorial01
+  hs-source-dirs:      src
+  main-is:             Tutorial1.hs
+  default-language:    Haskell2010
+  ghc-options:         -Wall
+  build-depends:       base >= 4.7 && < 5
+                     , OpenGLRaw
+                     , GLFW-b
+
+executable tutorial02
+  hs-source-dirs:      src
+  main-is:             Tutorial2.hs
+  default-language:    Haskell2010
+  ghc-options:         -Wall
+  build-depends:       base >= 4.7 && < 5
+                     , OpenGLRaw
+                     , GLFW-b
+                     , bytestring
+
+executable tutorial03
+  hs-source-dirs:      src
+  main-is:             Tutorial3.hs
+  default-language:    Haskell2010
+  ghc-options:         -Wall
+  build-depends:       base >= 4.7 && < 5
+                     , OpenGLRaw
+                     , GLFW-b
+                     , bytestring
+                     , linear
