@@ -29,6 +29,7 @@ executable tutorial02
   main-is:             Tutorial2.hs
   default-language:    Haskell2010
   ghc-options:         -Wall
+  other-modules: Shader
   build-depends:       base >= 4.7 && < 5
                      , OpenGLRaw
                      , GLFW-b
@@ -39,6 +40,7 @@ executable tutorial03
   main-is:             Tutorial3.hs
   default-language:    Haskell2010
   ghc-options:         -Wall
+  other-modules: Shader
   build-depends:       base >= 4.7 && < 5
                      , OpenGLRaw
                      , GLFW-b
@@ -50,6 +52,7 @@ executable tutorial04
   main-is:             Tutorial4.hs
   default-language:    Haskell2010
   ghc-options:         -Wall
+  other-modules: Shader
   build-depends:       base >= 4.7 && < 5
                      , OpenGLRaw
                      , GLFW-b
@@ -61,6 +64,7 @@ executable tutorial05
   main-is:             Tutorial5.hs
   default-language:    Haskell2010
   ghc-options:         -Wall
+  other-modules: Shader
   build-depends:       base >= 4.7 && < 5
                      , OpenGLRaw
                      , GLFW-b
@@ -74,6 +78,7 @@ executable modeltest
   main-is:             ModelTest.hs
   default-language:    Haskell2010
   ghc-options:         -Wall
+  other-modules: Shader
   build-depends:       base >= 4.7 && < 5
                      , OpenGLRaw
                      , GLFW-b
@@ -82,3 +87,19 @@ executable modeltest
                      , JuicyPixels
                      , vector
                      , wavefront-obj
+
+executable texturedcube
+  hs-source-dirs:      src
+  main-is:             TexturedCube.hs
+  default-language:    Haskell2010
+  ghc-options:         -Wall
+  other-modules: Shader
+  build-depends:       base >= 4.7 && < 5
+                     , OpenGLRaw
+                     , GLFW-b
+                     , bytestring
+                     , linear
+                     , JuicyPixels
+                     , vector
+                     , lens
+                     -- , wavefront-obj
