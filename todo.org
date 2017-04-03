@@ -1,0 +1,56 @@
+* TODO Keyboard & mouse movement
+** Keyboard movement
+Sort of implemented. However, not relative to player direction yet.
+*** DONE Move relative to eye direction
+CLOSED: [2017-03-18 Sat 17:01]
+*** DONE Strafing
+CLOSED: [2017-04-03 Mon 14:29]
+
+** DONE Mouse movement
+CLOSED: [2017-04-03 Mon 14:29]
+Set glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED) and
+set a callback with glfwSetCursorPosCallback(window, cursor_pos_callback).
+
+GLFW_CURSOR_DISABLED hides the cursor and continually recenters it,
+and cursor_pos_callback is a function of type Window -> Double -> Double -> IO ().
+
+** TODO Use NetWire (or some other FRP)
+That's the better way to handle the state, for sure.
+Keep it dumb and simple for now tho.
+
+
+** TODO Use quaternions; solve gimball lock
+Future problem!
+
+
+
+* DONE Texture loading with SOIL
+CLOSED: [2017-03-15 Wed 13:27]
+SOIL is bad. Use JuicyPixels instead.
+
+* DONE Texture loading with JuicyPixels
+CLOSED: [2017-03-18 Sat 16:04]
+Should be simple? Potentially tricky part is translating from Vector
+to whatever GL expects (Ptr CUInt?). Should be interesting enough.
+
+* TODO Model input/output (obj?)
+While AssImp would be nice, I can't be bothered to deal with the FFI for now.
+Just use one of the simple already existing OBJ libraries.
+
+
+** TODO Reading - AssImp - FFI
+** TODO Writing - bespoke? obj is simple enough (AssImp can do it too)
+
+
+
+* TODO Create mesh from heightmap
+** TODO Write to OBJ
+
+* TODO Load generated mesh in OpenGL
+
+* TODO Texture mesh with heightmap
+
+
+* TODO Create sphere mesh
+
+* TODO Modulate sphere mesh to create planet heightmap

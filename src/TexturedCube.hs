@@ -8,11 +8,14 @@ import qualified Data.ByteString.Char8 as C
 
 import Data.Foldable (toList)
 import Data.Vector.Storable (unsafeWith)
+-- import Data.Vector (toList)
 import Data.IORef
 
 import Linear
 
 import Codec.Picture
+import Codec.Wavefront (WavefrontOBJ(..))
+import qualified Codec.Wavefront as OBJ
 import Foreign hiding (rotate)
 import Control.Lens
 import Control.Monad (when, forever, guard)
@@ -21,7 +24,7 @@ import System.Exit
 import Graphics.GL
 
 import GHC.Float (double2Float)
-
+import System.Random (randomRIO)
 import Shader
 
 import Graphics.UI.GLFW (Window, Key, KeyState, ModifierKeys)
@@ -79,6 +82,10 @@ rectIndices =
     0, 1, 3, -- First Triangle
     1, 2, 3  -- Second Triangle
   ]
+
+
+modelPath :: String
+modelPath = "resources/teapot.obj"
 
 
 mainKeyCallback :: IORef PlayerState -> Window -> Key -> Int -> KeyState -> ModifierKeys -> IO ()
@@ -156,38 +163,63 @@ main = do
       -- build & compile shader
       program <- loadShaders "shaders/textures.vert" "shaders/textures.frag"
 
-      -- create VAO
+      teaShader <- loadShaders "shaders/teapot.vert" "shaders/teapot.frag"
+
+      -- create cube VAO
       vao <- alloca $ \vaoPtr -> glGenVertexArrays 1 vaoPtr >> peek vaoPtr
       -- create VBO & EBO
       vbo <- alloca $ \vboPtr -> glGenBuffers 1 vboPtr >> peek vboPtr
       ebo <- alloca $ \eboPtr -> glGenBuffers 1 eboPtr >> peek eboPtr
 
+
+      teaVao <- alloca $ \vaoPtr -> glGenVertexArrays 1 vaoPtr >> peek vaoPtr
+      -- create VBO & EBO
+      teaVbo <- alloca $ \vboPtr -> glGenBuffers 1 vboPtr >> peek vboPtr
+      teaEbo <- alloca $ \eboPtr -> glGenBuffers 1 eboPtr >> peek eboPtr
+
       -- bind VAO
       glBindVertexArray vao
       -- bind & load vertices
       glBindBuffer GL_ARRAY_BUFFER vbo
-      withArray rectVertices $ \arr ->
+      withArray cubeVertices $ \arr ->
         glBufferData GL_ARRAY_BUFFER
-          (fromIntegral $ glFloatSize * length rectVertices) arr GL_STATIC_DRAW
-      -- bind & load indices
-      glBindBuffer GL_ELEMENT_ARRAY_BUFFER ebo
-      withArray rectIndices $ \arr ->
-        glBufferData GL_ELEMENT_ARRAY_BUFFER
-          (fromIntegral $ glUintSize * length rectIndices) arr GL_STATIC_DRAW
+          (fromIntegral $ glFloatSize * length cubeVertices) arr GL_STATIC_DRAW
+
 
 
       -- set attrib pointers
       let size = sizeOf (undefined :: GLfloat)
-          stride = fromIntegral $ 8 * size
+          stride = fromIntegral $ 5 * size
       glVertexAttribPointer 0 3 GL_FLOAT GL_FALSE stride nullPtr
       glEnableVertexAttribArray 0
-      glVertexAttribPointer 1 3 GL_FLOAT GL_FALSE stride (nullPtr `plusPtr` (3*size))
-      glEnableVertexAttribArray 1
-      glVertexAttribPointer 2 2 GL_FLOAT GL_FALSE stride (nullPtr `plusPtr` (6*size))
+      glVertexAttribPointer 2 2 GL_FLOAT GL_FALSE stride (nullPtr `plusPtr` (3*size))
       glEnableVertexAttribArray 2
+      -- glVertexAttribPointer 2 2 GL_FLOAT GL_FALSE stride (nullPtr `plusPtr` (6*size))
+      -- glEnableVertexAttribArray 2
 
       -- unbind VAO
       glBindVertexArray 0
+
+
+      -- load model (partial because fuck it)
+      glBindVertexArray teaVao
+      glBindBuffer GL_ARRAY_BUFFER teaVbo
+
+      Right obj <- OBJ.fromFile modelPath
+      withArray ((\(OBJ.Location x y z _) -> [x, y, z]) `concatMap` toList (objLocations obj)) $ \arr -> do
+      -- withArray (pointLocIndex . elValue <$> toList (objPoints obj)) $ \arr ->
+        -- let indices = objLocations obj
+        --     loc2List (Location x y z _) = [x,y,z]
+            -- verts = !!
+        glBufferData GL_ARRAY_BUFFER
+          (fromIntegral $ glFloatSize * length (objLocations obj) * 3) arr GL_STATIC_DRAW
+
+
+
+      glVertexAttribPointer 0 3 GL_FLOAT GL_FALSE (fromIntegral $ 3 * size) nullPtr
+      glEnableVertexAttribArray 0
+      glBindVertexArray 0
+
 
       -- create & bind texture
       texture <- alloca $ \txtPtr -> glGenTextures 1 txtPtr >> peek txtPtr
@@ -221,41 +253,63 @@ main = do
 
         glClear $ GL_COLOR_BUFFER_BIT .|. GL_DEPTH_BUFFER_BIT
 
+        time <- (maybe 0 (double2Float) <$> GLFW.getTime)
+
         -- update player state
         p <- readIORef player
         let r = cross (_camF p) (_camU p)
         let p' = p { _pos = (_pos p) + (_posD p)
-                   , _camF = rotate (axisAngle r (_vAngD p))
-                     (rotate (axisAngle (_camU p) (_hAngD p)) (_camF p))
+                   -- , _camF = rotate (axisAngle r (_vAngD p)) $
+                   --             rotate (axisAngle (_camU p) (_hAngD p)) (_camF p)
+                   , _camF = rotate (axisAngle (_camU p) (_hAngD p)) $
+                               rotate (axisAngle r (_vAngD p)) (_camF p)
                    , _hAngD = 0
                    , _vAngD = 0
                    }
         writeIORef player p'
 
-        -- let projection = perspective 1 1.25 0.1 100
-        let projection = perspective 1 1.25 0.1 10
+        let projection = perspective 1 1.25 0.1 100
         let view = lookAt (_pos p) (_pos p + _camF p) (_camU p)
-        let model = mkTransformation (axisAngle (V3 0 1 0) 1) (V3 0 0 0)
-            mvp = projection !*! view !*! model
 
-        matrix <- getShaderUniform program "mvp"
-
-
+        pMat <- getShaderUniform program "projection"
+        vMat <- getShaderUniform program "view"
+        mMat <- getShaderUniform program "model"
 
         glBindTexture GL_TEXTURE_2D texture
+
         glUseProgram program
 
-
-        withArray (concatMap toList (transpose mvp)) $ \mvpPointer -> do
-          glUniformMatrix4fv (fromIntegral matrix) 1 GL_FALSE mvpPointer
+        setUniformMatrix4fv projection pMat
+        setUniformMatrix4fv view vMat
 
         glBindVertexArray vao
-        glDrawElements GL_TRIANGLES 6 GL_UNSIGNED_INT nullPtr
+
+        mapM_ (\(v,i) -> do
+                  let ang = normalize v
+                  let s = 2 * sin (time * i * 0.1)
+                  let scale = V4 (V4 s 0 0 0) (V4 0 s 0 0 ) (V4 0 0 s 0) (V4 0 0 0 1)
+                  let model = (mkTransformation (axisAngle ang (i*time*0.1)) v) !*! scale
+                  setUniformMatrix4fv model mMat
+                  glDrawArrays GL_TRIANGLES 0 36
+
+                  ) $ zip cubePositions [1..]
         glBindVertexArray 0
+
+        glUseProgram teaShader
+        glBindVertexArray teaVao
+        let model = identity :: M44 GLfloat
+        pTea <- getShaderUniform teaShader "projection"
+        vTea <- getShaderUniform teaShader "view"
+        mTea <- getShaderUniform teaShader "model"
+        setUniformMatrix4fv projection pTea
+        setUniformMatrix4fv view vTea
+        setUniformMatrix4fv model mTea
+        glDrawArrays GL_LINE_LOOP 0 (fromIntegral $ length (objLocations obj))
+        glBindVertexArray 0
+
 
         GLFW.swapBuffers win
 
-        -- escDown <- (GLFW.KeyState'Pressed ==) <$> GLFW.getKey win GLFW.Key'Escape
         shdClose <- GLFW.windowShouldClose win
 
         when shdClose $ do
@@ -265,3 +319,79 @@ main = do
 
           GLFW.terminate
           exitSuccess
+
+
+
+randUnitVector :: IO (V3 GLfloat)
+randUnitVector = do
+  x <- randomRIO (0,1)
+  y <- randomRIO (0,1)
+  z <- randomRIO (0,1)
+  pure $ normalize $ V3 x y z
+
+
+setUniformMatrix4fv mat uni = withArray (concatMap toList (transpose mat)) $ \matPtr -> do
+  glUniformMatrix4fv (fromIntegral uni) 1 GL_FALSE matPtr
+
+
+cubePositions :: [V3 GLfloat]
+cubePositions =
+  [
+    V3  0.0  0.0  0.0,
+    V3  2.0  5.0 (-15.0),
+    V3 (-1.5) (-2.2) (-2.5),
+    V3 (-3.8) (-2.0) (-12.3),
+    V3  2.4 (-0.4) (-3.5),
+    V3 (-1.7)  3.0 (-7.5),
+    V3  1.3 (-2.0) (-2.5),
+    V3  1.5  2.0 (-2.5),
+    V3  1.5  0.2 (-1.5),
+    V3 (-1.3)  1.0 (-1.5)
+  ]
+
+
+cubeVertices :: [GLfloat]
+cubeVertices =
+  [
+    -0.5, -0.5, -0.5,  0.0, 0.0,
+     0.5, -0.5, -0.5,  1.0, 0.0,
+     0.5,  0.5, -0.5,  1.0, 1.0,
+     0.5,  0.5, -0.5,  1.0, 1.0,
+    -0.5,  0.5, -0.5,  0.0, 1.0,
+    -0.5, -0.5, -0.5,  0.0, 0.0,
+
+    -0.5, -0.5,  0.5,  0.0, 0.0,
+     0.5, -0.5,  0.5,  1.0, 0.0,
+     0.5,  0.5,  0.5,  1.0, 1.0,
+     0.5,  0.5,  0.5,  1.0, 1.0,
+    -0.5,  0.5,  0.5,  0.0, 1.0,
+    -0.5, -0.5,  0.5,  0.0, 0.0,
+
+    -0.5,  0.5,  0.5,  1.0, 0.0,
+    -0.5,  0.5, -0.5,  1.0, 1.0,
+    -0.5, -0.5, -0.5,  0.0, 1.0,
+    -0.5, -0.5, -0.5,  0.0, 1.0,
+    -0.5, -0.5,  0.5,  0.0, 0.0,
+    -0.5,  0.5,  0.5,  1.0, 0.0,
+
+     0.5,  0.5,  0.5,  1.0, 0.0,
+     0.5,  0.5, -0.5,  1.0, 1.0,
+     0.5, -0.5, -0.5,  0.0, 1.0,
+     0.5, -0.5, -0.5,  0.0, 1.0,
+     0.5, -0.5,  0.5,  0.0, 0.0,
+     0.5,  0.5,  0.5,  1.0, 0.0,
+
+    -0.5, -0.5, -0.5,  0.0, 1.0,
+     0.5, -0.5, -0.5,  1.0, 1.0,
+     0.5, -0.5,  0.5,  1.0, 0.0,
+     0.5, -0.5,  0.5,  1.0, 0.0,
+    -0.5, -0.5,  0.5,  0.0, 0.0,
+    -0.5, -0.5, -0.5,  0.0, 1.0,
+
+    -0.5,  0.5, -0.5,  0.0, 1.0,
+     0.5,  0.5, -0.5,  1.0, 1.0,
+     0.5,  0.5,  0.5,  1.0, 0.0,
+     0.5,  0.5,  0.5,  1.0, 0.0,
+    -0.5,  0.5,  0.5,  0.0, 0.0,
+    -0.5,  0.5, -0.5,  0.0, 1.0
+  ]

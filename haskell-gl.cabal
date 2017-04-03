@@ -102,4 +102,5 @@ executable texturedcube
                      , JuicyPixels
                      , vector
                      , lens
-                     -- , wavefront-obj
+                     , random
+                     , wavefront
