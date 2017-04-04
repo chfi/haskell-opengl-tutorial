@@ -6,18 +6,21 @@ module Main where
 import Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as C
 
+import Data.Monoid ((<>), mempty)
 import Data.Foldable (toList)
+import qualified Data.Vector.Storable as VS
 import Data.Vector.Storable (unsafeWith)
--- import Data.Vector (toList)
+import qualified Data.Vector as V
+import Data.Vector (convert, Vector, snoc, cons)
 import Data.IORef
 
 import Linear
 
 import Codec.Picture
-import Codec.Wavefront (WavefrontOBJ(..))
+import Codec.Wavefront (WavefrontOBJ(..), Face(..), FaceIndex(..))
 import qualified Codec.Wavefront as OBJ
 import Foreign hiding (rotate)
-import Control.Lens
+import Control.Lens hiding (snoc, cons)
 import Control.Monad (when, forever, guard)
 import System.Exit
 
@@ -63,6 +66,23 @@ getShaderUniform prog uniformName = do
   when (location == -1) $ error $ "Couldn't bind uniform: " ++ C.unpack uniformName
   pure location
 
+
+
+
+-- currently just positions
+facesToIndices :: V.Vector Face -> V.Vector GLuint
+facesToIndices fs = V.fromList $ concatMap (\(Face (FaceIndex l1 t1 n1)
+                                               (FaceIndex l2 t2 n2)
+                                               (FaceIndex l3 t3 n3) _) -> fromIntegral <$> [l1-1, l2-1, l3-1]) fs
+                                              -- (FaceIndex l3 t3 n3) _) -> [l1, l2, l3]) fs
+  --                              acc `snoc` (l1-1) `snoc` (l2-1) `snoc` (l3-1)
+--                              ) mempty fs
+-- facesToIndices :: V.Vector Face -> (V.Vertex Int, V.Vertex Int, V.Vertex Int)
+-- facesToIndices fs = foldl (\acc (Face (FaceIndex l1 t1 n1)
+--                                       (FaceIndex l2 t2 n2)
+--                                       (FaceIndex l3 t3 n3) _) ->
+
+--                               ) (empty, empty, empty)
 
 
 rectVertices :: [GLfloat]
@@ -154,7 +174,7 @@ main = do
       GLFW.setKeyCallback win (Just $ mainKeyCallback player)
       GLFW.setCursorPosCallback win (Just $ mainCursorCallback mouse player)
 
-      glClearColor 0 0 1.0 0
+      glClearColor 0 0 0 0
 
       glEnable GL_DEPTH_TEST
 
@@ -203,21 +223,39 @@ main = do
 
       -- load model (partial because fuck it)
       glBindVertexArray teaVao
-      glBindBuffer GL_ARRAY_BUFFER teaVbo
 
-      Right obj <- OBJ.fromFile modelPath
-      withArray ((\(OBJ.Location x y z _) -> [x, y, z]) `concatMap` toList (objLocations obj)) $ \arr -> do
-      -- withArray (pointLocIndex . elValue <$> toList (objPoints obj)) $ \arr ->
-        -- let indices = objLocations obj
-        --     loc2List (Location x y z _) = [x,y,z]
-            -- verts = !!
+      Right obj <- OBJ.fromFile "resources/teapot.obj"
+      glBindBuffer GL_ARRAY_BUFFER teaVbo
+      let vs = zip [0..] ((\(OBJ.Location x y z _) -> (x, y, z)) <$> V.toList (objLocations obj))
+      mapM_ print vs
+      withArray ((\(OBJ.Location x y z _) -> [x, y, z]) `concatMap` V.toList (objLocations obj)) $ \arr -> do
         glBufferData GL_ARRAY_BUFFER
           (fromIntegral $ glFloatSize * length (objLocations obj) * 3) arr GL_STATIC_DRAW
-
-
-
       glVertexAttribPointer 0 3 GL_FLOAT GL_FALSE (fromIntegral $ 3 * size) nullPtr
       glEnableVertexAttribArray 0
+
+
+
+      glBindBuffer GL_ELEMENT_ARRAY_BUFFER teaEbo
+
+      let is = V.toList $ facesToIndices (OBJ.elValue <$> objFaces obj)
+      -- print obj
+      -- print (objLocations obj)
+      -- print ((\(OBJ.Face x y z _) -> faceLocIndex <$> [x,y,z]) . OBJ.elValue <$> objFaces obj)
+      -- print is
+      withArray is $ \arr ->
+        glBufferData GL_ELEMENT_ARRAY_BUFFER
+          (fromIntegral $ glUintSize * length (is)) arr GL_STATIC_DRAW
+
+      -- let is' :: [GLuint]
+          -- is' = [4,0,3,4,3,7,2,6,7,2,7,3,1,5,2,5,6,2,0,4,1,4,5,1,4,7,5,7,6,5,0,1,2,0,2,3]
+          -- -- is' = [0,1,2,3,4,5,6,7,0,3,6,1,4,7,2,5,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+      -- withArray is' $ \arr -> do
+      --   glBufferData GL_ELEMENT_ARRAY_BUFFER
+      --     (fromIntegral $ glUintSize * length is') arr GL_STATIC_DRAW
+
+
+
       glBindVertexArray 0
 
 
@@ -284,6 +322,7 @@ main = do
 
         glBindVertexArray vao
 
+  {-
         mapM_ (\(v,i) -> do
                   let ang = normalize v
                   let s = 2 * sin (time * i * 0.1)
@@ -293,18 +332,19 @@ main = do
                   glDrawArrays GL_TRIANGLES 0 36
 
                   ) $ zip cubePositions [1..]
+  -}
         glBindVertexArray 0
 
         glUseProgram teaShader
         glBindVertexArray teaVao
-        let model = identity :: M44 GLfloat
+        let model = (mkTransformation (axisAngle (V3 0 1 0) (time*0.6)) (V3 1 1 1))
         pTea <- getShaderUniform teaShader "projection"
         vTea <- getShaderUniform teaShader "view"
         mTea <- getShaderUniform teaShader "model"
         setUniformMatrix4fv projection pTea
         setUniformMatrix4fv view vTea
         setUniformMatrix4fv model mTea
-        glDrawArrays GL_LINE_LOOP 0 (fromIntegral $ length (objLocations obj))
+        glDrawElements GL_TRIANGLES (fromIntegral $ length is * 3) GL_UNSIGNED_INT nullPtr
         glBindVertexArray 0
 
 
@@ -324,12 +364,13 @@ main = do
 
 randUnitVector :: IO (V3 GLfloat)
 randUnitVector = do
-  x <- randomRIO (0,1)
-  y <- randomRIO (0,1)
-  z <- randomRIO (0,1)
+  x <- randomRIO (-1,1)
+  y <- randomRIO (-1,1)
+  z <- randomRIO (-1,1)
   pure $ normalize $ V3 x y z
 
 
+setUniformMatrix4fv :: Integral a => M44 GLfloat -> a -> IO ()
 setUniformMatrix4fv mat uni = withArray (concatMap toList (transpose mat)) $ \matPtr -> do
   glUniformMatrix4fv (fromIntegral uni) 1 GL_FALSE matPtr
 
