@@ -97,7 +97,8 @@ locationToList :: OBJ.Location -> [GLfloat]
 locationToList (OBJ.Location x y z _) = [x,y,z]
 
 texCoordToList :: OBJ.TexCoord -> [GLfloat]
-texCoordToList (OBJ.TexCoord u v _) = [u, v]
+  -- `1 - v` because the opengl coordinate system is different from OBJ's UV coords
+texCoordToList (OBJ.TexCoord u v _) = [u, 1-v]
 
 
 faceToVerts :: V.Vector OBJ.Location -> V.Vector OBJ.TexCoord -> Face -> [GLfloat]
@@ -117,6 +118,28 @@ faceToVerts vs ts (Face (FaceIndex v1 t1 _)
 
 facesToBuffer :: V.Vector OBJ.Location -> V.Vector OBJ.TexCoord -> V.Vector Face -> V.Vector GLfloat
 facesToBuffer vs ts fs = V.fromList $ concatMap (faceToVerts vs ts) fs
+
+
+  -- TODO make this function total
+loadObj :: String -> IO (V.Vector GLfloat)
+loadObj fp = do
+  Right obj <- OBJ.fromFile fp
+  pure $ facesToBuffer (objLocations obj) (objTexCoords obj) (OBJ.elValue <$> objFaces obj)
+
+-- TODO should have functions that take care of binding & unbinding VAOs etc.
+objLoadBuffer :: WavefrontOBJ -> GLuint -> IO ()
+objLoadBuffer obj vbo = do
+  let bfr = facesToBuffer (objLocations obj) (objTexCoords obj) (OBJ.elValue <$> objFaces obj)
+  glBindBuffer GL_ARRAY_BUFFER vbo
+  withArray (V.toList bfr) $ \arr -> do
+    glBufferData GL_ARRAY_BUFFER
+      (fromIntegral $ glFloatSize * length bfr) arr GL_STATIC_DRAW
+  glVertexAttribPointer 0 3 GL_FLOAT GL_FALSE (fromIntegral $ 5 * glFloatSize) nullPtr
+  glEnableVertexAttribArray 0
+
+  glVertexAttribPointer 1 2 GL_FLOAT GL_FALSE (fromIntegral $ 5 * glFloatSize)
+    (nullPtr `plusPtr` (3 * glFloatSize))
+  glEnableVertexAttribArray 1
 
 
 
@@ -199,73 +222,19 @@ main = do
       -- build & compile shader
       program <- loadShaders "shaders/textures.vert" "shaders/textures.frag"
 
-      teaShader <- loadShaders "shaders/teapot.vert" "shaders/teapot.frag"
-
-      -- create cube VAO
-      vao <- alloca $ \vaoPtr -> glGenVertexArrays 1 vaoPtr >> peek vaoPtr
-      -- create VBO & EBO
-      vbo <- alloca $ \vboPtr -> glGenBuffers 1 vboPtr >> peek vboPtr
-      ebo <- alloca $ \eboPtr -> glGenBuffers 1 eboPtr >> peek eboPtr
-
 
       teaVao <- alloca $ \vaoPtr -> glGenVertexArrays 1 vaoPtr >> peek vaoPtr
       -- create VBO & EBO
       teaVbo <- alloca $ \vboPtr -> glGenBuffers 1 vboPtr >> peek vboPtr
-      teaTexVbo <- alloca $ \vboPtr -> glGenBuffers 1 vboPtr >> peek vboPtr
       teaEbo <- alloca $ \eboPtr -> glGenBuffers 1 eboPtr >> peek eboPtr
 
-      -- bind VAO
-      glBindVertexArray vao
-      -- bind & load vertices
-      glBindBuffer GL_ARRAY_BUFFER vbo
-      withArray cubeVertices $ \arr ->
-        glBufferData GL_ARRAY_BUFFER
-          (fromIntegral $ glFloatSize * length cubeVertices) arr GL_STATIC_DRAW
 
 
-      -- set attrib pointers
-      let size = sizeOf (undefined :: GLfloat)
-          stride = fromIntegral $ 5 * size
-      glVertexAttribPointer 0 3 GL_FLOAT GL_FALSE stride nullPtr
-      glEnableVertexAttribArray 0
-      glVertexAttribPointer 2 2 GL_FLOAT GL_FALSE stride (nullPtr `plusPtr` (3*size))
-      glEnableVertexAttribArray 2
-      -- glVertexAttribPointer 2 2 GL_FLOAT GL_FALSE stride (nullPtr `plusPtr` (6*size))
-      -- glEnableVertexAttribArray 2
-
-      -- unbind VAO
-      glBindVertexArray 0
-
-
-      -- load model (partial because fuck it)
       glBindVertexArray teaVao
 
+      -- load model (partial because fuck it)
       Right obj <- OBJ.fromFile "resources/capsule.obj"
-
-      -- let bfr = facesToBuffer (objFaces obj)
-      let bfr = V.toList $ facesToBuffer (objLocations obj) (objTexCoords obj) (OBJ.elValue <$> objFaces obj)
-      print bfr
-
-      glBindBuffer GL_ARRAY_BUFFER teaVbo
-      -- let vs = zip [0..] ((\(OBJ.Location x y z _) -> (x, y, z)) <$> V.toList (objLocations obj))
-      -- mapM_ print vs
-      withArray bfr $ \arr -> do
-        glBufferData GL_ARRAY_BUFFER
-          (fromIntegral $ glFloatSize * length bfr) arr GL_STATIC_DRAW
-      glVertexAttribPointer 0 3 GL_FLOAT GL_FALSE (fromIntegral $ 5 * size) nullPtr
-      glEnableVertexAttribArray 0
-
-      glVertexAttribPointer 1 2 GL_FLOAT GL_FALSE (fromIntegral $ 5 * size) (nullPtr `plusPtr` (3 * size))
-      glEnableVertexAttribArray 1
-
-
-      -- glBindBuffer GL_ELEMENT_ARRAY_BUFFER teaEbo
-
-      -- let is = V.toList $ facesToIndices (OBJ.elValue <$> objFaces obj)
-      -- withArray is $ \arr ->
-      --   glBufferData GL_ELEMENT_ARRAY_BUFFER
-      --     (fromIntegral $ glUintSize * length (is)) arr GL_STATIC_DRAW
-
+      objLoadBuffer obj teaVbo
 
       glBindVertexArray 0
 
@@ -308,8 +277,6 @@ main = do
         p <- readIORef player
         let r = cross (_camF p) (_camU p)
         let p' = p { _pos = (_pos p) + (_posD p)
-                   -- , _camF = rotate (axisAngle r (_vAngD p)) $
-                   --             rotate (axisAngle (_camU p) (_hAngD p)) (_camF p)
                    , _camF = rotate (axisAngle (_camU p) (_hAngD p)) $
                                rotate (axisAngle r (_vAngD p)) (_camF p)
                    , _hAngD = 0
@@ -320,45 +287,30 @@ main = do
         let projection = perspective 1 1.25 0.1 100
         let view = lookAt (_pos p) (_pos p + _camF p) (_camU p)
 
-        pMat <- getShaderUniform program "projection"
-        vMat <- getShaderUniform program "view"
-        mMat <- getShaderUniform program "model"
-
         glBindTexture GL_TEXTURE_2D texture
 
         glUseProgram program
 
-        setUniformMatrix4fv projection pMat
-        setUniformMatrix4fv view vMat
 
-        glBindVertexArray vao
-
-  {-
-        mapM_ (\(v,i) -> do
-                  let ang = normalize v
-                  let s = 2 * sin (time * i * 0.1)
-                  let scale = V4 (V4 s 0 0 0) (V4 0 s 0 0 ) (V4 0 0 s 0) (V4 0 0 0 1)
-                  let model = (mkTransformation (axisAngle ang (i*time*0.1)) v) !*! scale
-                  setUniformMatrix4fv model mMat
-                  glDrawArrays GL_TRIANGLES 0 36
-
-                  ) $ zip cubePositions [1..]
-  -}
-        glBindVertexArray 0
-
-        glUseProgram program
-        glBindVertexArray teaVao
-        glBindTexture GL_TEXTURE_2D texture
-        let model = (mkTransformation (axisAngle (V3 0 1 0) (time*0.6)) (V3 1 1 1))
         pTea <- getShaderUniform program "projection"
         vTea <- getShaderUniform program "view"
         mTea <- getShaderUniform program "model"
         setUniformMatrix4fv projection pTea
         setUniformMatrix4fv view vTea
-        setUniformMatrix4fv model mTea
-        -- glDrawArrays GL_TRIANGLES 0 (fromIntegral $ length bfr `div` 3)
-        glDrawArrays GL_TRIANGLES 0 (fromIntegral $ length (objFaces obj) * 3)
-        -- glDrawElements GL_TRIANGLES (fromIntegral $ length is * 3) GL_UNSIGNED_INT nullPtr
+
+        glBindVertexArray teaVao
+
+
+        mapM_ (\(v,i) -> do
+                  let ang = normalize v
+                  let s = 2 * sin (time * i * 0.1)
+                  let scale = V4 (V4 s 0 0 0) (V4 0 s 0 0 ) (V4 0 0 s 0) (V4 0 0 0 1)
+                  let model = (mkTransformation (axisAngle ang (i*time*0.1)) v) !*! scale
+                  setUniformMatrix4fv model mTea
+                  glDrawArrays GL_TRIANGLES 0 (fromIntegral $ length (objFaces obj) * 3)
+
+                  ) $ zip cubePositions [1..]
+
         glBindVertexArray 0
 
 
@@ -368,8 +320,8 @@ main = do
 
         when shdClose $ do
           glDeleteProgram program
-          with vbo $ \ptr -> glDeleteBuffers 1 ptr
-          with ebo $ \ptr -> glDeleteBuffers 1 ptr
+          with teaVbo $ \ptr -> glDeleteBuffers 1 ptr
+          with teaEbo $ \ptr -> glDeleteBuffers 1 ptr
 
           GLFW.terminate
           exitSuccess
@@ -402,51 +354,4 @@ cubePositions =
     V3  1.5  2.0 (-2.5),
     V3  1.5  0.2 (-1.5),
     V3 (-1.3)  1.0 (-1.5)
-  ]
-
-
-cubeVertices :: [GLfloat]
-cubeVertices =
-  [
-    -0.5, -0.5, -0.5,  0.0, 0.0,
-     0.5, -0.5, -0.5,  1.0, 0.0,
-     0.5,  0.5, -0.5,  1.0, 1.0,
-     0.5,  0.5, -0.5,  1.0, 1.0,
-    -0.5,  0.5, -0.5,  0.0, 1.0,
-    -0.5, -0.5, -0.5,  0.0, 0.0,
-
-    -0.5, -0.5,  0.5,  0.0, 0.0,
-     0.5, -0.5,  0.5,  1.0, 0.0,
-     0.5,  0.5,  0.5,  1.0, 1.0,
-     0.5,  0.5,  0.5,  1.0, 1.0,
-    -0.5,  0.5,  0.5,  0.0, 1.0,
-    -0.5, -0.5,  0.5,  0.0, 0.0,
-
-    -0.5,  0.5,  0.5,  1.0, 0.0,
-    -0.5,  0.5, -0.5,  1.0, 1.0,
-    -0.5, -0.5, -0.5,  0.0, 1.0,
-    -0.5, -0.5, -0.5,  0.0, 1.0,
-    -0.5, -0.5,  0.5,  0.0, 0.0,
-    -0.5,  0.5,  0.5,  1.0, 0.0,
-
-     0.5,  0.5,  0.5,  1.0, 0.0,
-     0.5,  0.5, -0.5,  1.0, 1.0,
-     0.5, -0.5, -0.5,  0.0, 1.0,
-     0.5, -0.5, -0.5,  0.0, 1.0,
-     0.5, -0.5,  0.5,  0.0, 0.0,
-     0.5,  0.5,  0.5,  1.0, 0.0,
-
-    -0.5, -0.5, -0.5,  0.0, 1.0,
-     0.5, -0.5, -0.5,  1.0, 1.0,
-     0.5, -0.5,  0.5,  1.0, 0.0,
-     0.5, -0.5,  0.5,  1.0, 0.0,
-    -0.5, -0.5,  0.5,  0.0, 0.0,
-    -0.5, -0.5, -0.5,  0.0, 1.0,
-
-    -0.5,  0.5, -0.5,  0.0, 1.0,
-     0.5,  0.5, -0.5,  1.0, 1.0,
-     0.5,  0.5,  0.5,  1.0, 0.0,
-     0.5,  0.5,  0.5,  1.0, 0.0,
-    -0.5,  0.5,  0.5,  0.0, 0.0,
-    -0.5,  0.5, -0.5,  0.0, 1.0
   ]
