@@ -6,6 +6,7 @@ module Main where
 import Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as C
 
+import Data.Maybe (catMaybes, fromMaybe)
 import Data.Monoid ((<>), mempty)
 import Data.Foldable (toList)
 import qualified Data.Vector.Storable as VS
@@ -70,38 +71,53 @@ getShaderUniform prog uniformName = do
 
 
 -- currently just positions
+
 facesToIndices :: V.Vector Face -> V.Vector GLuint
-facesToIndices fs = V.fromList $ concatMap (\(Face (FaceIndex l1 t1 n1)
-                                               (FaceIndex l2 t2 n2)
-                                               (FaceIndex l3 t3 n3) _) -> fromIntegral <$> [l1-1, l2-1, l3-1]) fs
-                                              -- (FaceIndex l3 t3 n3) _) -> [l1, l2, l3]) fs
-  --                              acc `snoc` (l1-1) `snoc` (l2-1) `snoc` (l3-1)
---                              ) mempty fs
--- facesToIndices :: V.Vector Face -> (V.Vertex Int, V.Vertex Int, V.Vertex Int)
--- facesToIndices fs = foldl (\acc (Face (FaceIndex l1 t1 n1)
---                                       (FaceIndex l2 t2 n2)
---                                       (FaceIndex l3 t3 n3) _) ->
-
---                               ) (empty, empty, empty)
+facesToIndices fs = V.fromList $ concatMap
+  (\(Face a b c _) ->
+      pred . fromIntegral . OBJ.faceLocIndex <$> [a,b,c]
+      ) fs
 
 
-rectVertices :: [GLfloat]
-rectVertices =
-  [
-    -- positions       -- colors        -- texture coordinates
-     0.5,  0.5, 0.0,   1.0, 0.0, 0.0,   1.0, 1.0,   -- Top Right
-     0.5, -0.5, 0.0,   0.0, 1.0, 0.0,   1.0, 0.0,   -- Bottom Right
-    -0.5, -0.5, 0.0,   0.0, 0.0, 1.0,   0.0, 0.0,   -- Bottom Left
-    -0.5,  0.5, 0.0,   1.0, 1.0, 0.0,   0.0, 1.0    -- Top Left
-  ]
+facesToTexIndices :: V.Vector Face -> V.Vector GLuint
+facesToTexIndices fs = V.fromList $ concatMap
+  (\(Face a b c _) ->
+      catMaybes $ ((fmap (pred . fromIntegral)) . OBJ.faceTexCoordIndex) <$> [a,b,c]
+      ) fs
 
 
-rectIndices :: [GLuint]
-rectIndices =
-  [
-    0, 1, 3, -- First Triangle
-    1, 2, 3  -- Second Triangle
-  ]
+facesToNorIndices :: V.Vector Face -> V.Vector GLuint
+facesToNorIndices fs = V.fromList $ concatMap
+  (\(Face a b c _) ->
+      catMaybes $ ((fmap (pred . fromIntegral)) . OBJ.faceNorIndex) <$> [a,b,c]
+      ) fs
+
+
+locationToList :: OBJ.Location -> [GLfloat]
+locationToList (OBJ.Location x y z _) = [x,y,z]
+
+texCoordToList :: OBJ.TexCoord -> [GLfloat]
+texCoordToList (OBJ.TexCoord u v _) = [u, v]
+
+
+faceToVerts :: V.Vector OBJ.Location -> V.Vector OBJ.TexCoord -> Face -> [GLfloat]
+faceToVerts vs ts (Face (FaceIndex v1 t1 _)
+                        (FaceIndex v2 t2 _)
+                        (FaceIndex v3 t3 _) _) =
+  let helpT t = fromMaybe [0,0] $ t >>= \x -> texCoordToList <$> (ts V.!? (x-1))
+      helpV v = locationToList (vs V.! (v-1))
+  -- in concat [ (concatMap helpV [v1,v2,v3])
+  --           , (concatMap helpT [t1,t2,t3])
+  --           ]
+      [t1', t2', t3'] = helpT <$> [t1,t2,t3]
+      [v1', v2', v3'] = helpV <$> [v1,v2,v3]
+  in concat [v1', t1', v2', t2', v3', t3']
+
+-- create vector of vertices, then add each face vertex to it
+
+facesToBuffer :: V.Vector OBJ.Location -> V.Vector OBJ.TexCoord -> V.Vector Face -> V.Vector GLfloat
+facesToBuffer vs ts fs = V.fromList $ concatMap (faceToVerts vs ts) fs
+
 
 
 modelPath :: String
@@ -195,6 +211,7 @@ main = do
       teaVao <- alloca $ \vaoPtr -> glGenVertexArrays 1 vaoPtr >> peek vaoPtr
       -- create VBO & EBO
       teaVbo <- alloca $ \vboPtr -> glGenBuffers 1 vboPtr >> peek vboPtr
+      teaTexVbo <- alloca $ \vboPtr -> glGenBuffers 1 vboPtr >> peek vboPtr
       teaEbo <- alloca $ \eboPtr -> glGenBuffers 1 eboPtr >> peek eboPtr
 
       -- bind VAO
@@ -204,7 +221,6 @@ main = do
       withArray cubeVertices $ \arr ->
         glBufferData GL_ARRAY_BUFFER
           (fromIntegral $ glFloatSize * length cubeVertices) arr GL_STATIC_DRAW
-
 
 
       -- set attrib pointers
@@ -224,36 +240,31 @@ main = do
       -- load model (partial because fuck it)
       glBindVertexArray teaVao
 
-      Right obj <- OBJ.fromFile "resources/teapot.obj"
+      Right obj <- OBJ.fromFile "resources/capsule.obj"
+
+      -- let bfr = facesToBuffer (objFaces obj)
+      let bfr = V.toList $ facesToBuffer (objLocations obj) (objTexCoords obj) (OBJ.elValue <$> objFaces obj)
+      print bfr
+
       glBindBuffer GL_ARRAY_BUFFER teaVbo
-      let vs = zip [0..] ((\(OBJ.Location x y z _) -> (x, y, z)) <$> V.toList (objLocations obj))
-      mapM_ print vs
-      withArray ((\(OBJ.Location x y z _) -> [x, y, z]) `concatMap` V.toList (objLocations obj)) $ \arr -> do
+      -- let vs = zip [0..] ((\(OBJ.Location x y z _) -> (x, y, z)) <$> V.toList (objLocations obj))
+      -- mapM_ print vs
+      withArray bfr $ \arr -> do
         glBufferData GL_ARRAY_BUFFER
-          (fromIntegral $ glFloatSize * length (objLocations obj) * 3) arr GL_STATIC_DRAW
-      glVertexAttribPointer 0 3 GL_FLOAT GL_FALSE (fromIntegral $ 3 * size) nullPtr
+          (fromIntegral $ glFloatSize * length bfr) arr GL_STATIC_DRAW
+      glVertexAttribPointer 0 3 GL_FLOAT GL_FALSE (fromIntegral $ 5 * size) nullPtr
       glEnableVertexAttribArray 0
 
+      glVertexAttribPointer 1 2 GL_FLOAT GL_FALSE (fromIntegral $ 5 * size) (nullPtr `plusPtr` (3 * size))
+      glEnableVertexAttribArray 1
 
 
-      glBindBuffer GL_ELEMENT_ARRAY_BUFFER teaEbo
+      -- glBindBuffer GL_ELEMENT_ARRAY_BUFFER teaEbo
 
-      let is = V.toList $ facesToIndices (OBJ.elValue <$> objFaces obj)
-      -- print obj
-      -- print (objLocations obj)
-      -- print ((\(OBJ.Face x y z _) -> faceLocIndex <$> [x,y,z]) . OBJ.elValue <$> objFaces obj)
-      -- print is
-      withArray is $ \arr ->
-        glBufferData GL_ELEMENT_ARRAY_BUFFER
-          (fromIntegral $ glUintSize * length (is)) arr GL_STATIC_DRAW
-
-      -- let is' :: [GLuint]
-          -- is' = [4,0,3,4,3,7,2,6,7,2,7,3,1,5,2,5,6,2,0,4,1,4,5,1,4,7,5,7,6,5,0,1,2,0,2,3]
-          -- -- is' = [0,1,2,3,4,5,6,7,0,3,6,1,4,7,2,5,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
-      -- withArray is' $ \arr -> do
+      -- let is = V.toList $ facesToIndices (OBJ.elValue <$> objFaces obj)
+      -- withArray is $ \arr ->
       --   glBufferData GL_ELEMENT_ARRAY_BUFFER
-      --     (fromIntegral $ glUintSize * length is') arr GL_STATIC_DRAW
-
+      --     (fromIntegral $ glUintSize * length (is)) arr GL_STATIC_DRAW
 
 
       glBindVertexArray 0
@@ -271,7 +282,7 @@ main = do
       glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER (fromIntegral GL_LINEAR)
 
       -- load image & create texture image
-      Right x <- readJpeg "resources/container.jpg"
+      Right x <- readJpeg "resources/capsule0.jpg"
       let img = convertRGB8 x
       unsafeWith (imageData img) $ \imgPtr -> do
         glTexImage2D GL_TEXTURE_2D 0 (fromIntegral GL_RGB)
@@ -335,16 +346,19 @@ main = do
   -}
         glBindVertexArray 0
 
-        glUseProgram teaShader
+        glUseProgram program
         glBindVertexArray teaVao
+        glBindTexture GL_TEXTURE_2D texture
         let model = (mkTransformation (axisAngle (V3 0 1 0) (time*0.6)) (V3 1 1 1))
-        pTea <- getShaderUniform teaShader "projection"
-        vTea <- getShaderUniform teaShader "view"
-        mTea <- getShaderUniform teaShader "model"
+        pTea <- getShaderUniform program "projection"
+        vTea <- getShaderUniform program "view"
+        mTea <- getShaderUniform program "model"
         setUniformMatrix4fv projection pTea
         setUniformMatrix4fv view vTea
         setUniformMatrix4fv model mTea
-        glDrawElements GL_TRIANGLES (fromIntegral $ length is * 3) GL_UNSIGNED_INT nullPtr
+        -- glDrawArrays GL_TRIANGLES 0 (fromIntegral $ length bfr `div` 3)
+        glDrawArrays GL_TRIANGLES 0 (fromIntegral $ length (objFaces obj) * 3)
+        -- glDrawElements GL_TRIANGLES (fromIntegral $ length is * 3) GL_UNSIGNED_INT nullPtr
         glBindVertexArray 0
 
 
